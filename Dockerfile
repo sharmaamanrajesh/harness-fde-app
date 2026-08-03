@@ -14,12 +14,14 @@ LABEL org.opencontainers.image.title="harness-demo-app" \
       org.opencontainers.image.revision="$COMMIT_SHA" \
       org.opencontainers.image.source="https://github.com/sharmaamanrajesh/harness-fde-app"
 
-RUN addgroup -S app && adduser -S app -G app
+# Pinned numeric UID/GID: Kubernetes `runAsNonRoot` cannot verify a username,
+# only a numeric user, and a pinned UID survives base-image changes.
+RUN addgroup -S -g 1001 app && adduser -S -u 1001 -G app app
 WORKDIR /app
-COPY --from=deps --chown=app:app /app/node_modules ./node_modules
-COPY --chown=app:app src ./src
-COPY --chown=app:app package.json ./
+COPY --from=deps --chown=1001:1001 /app/node_modules ./node_modules
+COPY --chown=1001:1001 src ./src
+COPY --chown=1001:1001 package.json ./
 
-USER app
+USER 1001
 EXPOSE 8080
 CMD ["node", "src/server.js"]
