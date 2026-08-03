@@ -8,7 +8,19 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 
-FROM node:22-alpine AS runtime
+# Runtime is plain Alpine with only the Node binary copied in — npm, yarn and
+# corepack are never present. That is a deliberate security decision, not an
+# optimisation: `node:22-alpine` bundles npm, whose vendored `tar` carried
+# CVE-2026-59873 (CRITICAL) and failed the pipeline's security gate, despite npm
+# never being executed at runtime. Removing the package manager removes the
+# entire class of finding rather than suppressing it.
+#
+# Alpine over distroless on purpose: distroless has no shell or coreutils, which
+# would silently break the Deployment's `preStop` sleep hook, and its Debian
+# base currently carries CVE-2026-31789 (CRITICAL) in libssl3.
+#
+# This stage contains no RUN, so cross-building needs no QEMU emulation at all.
+FROM alpine:3.24 AS runtime
 ARG COMMIT_SHA=local-dev
 ENV NODE_ENV=production \
     PORT=8080 \
@@ -18,16 +30,17 @@ LABEL org.opencontainers.image.title="harness-demo-app" \
       org.opencontainers.image.revision="$COMMIT_SHA" \
       org.opencontainers.image.source="https://github.com/sharmaamanrajesh/harness-fde-app"
 
-# No RUN in this stage: it is the only per-target-architecture stage, so keeping
-# it to COPY/metadata means cross-building needs no QEMU emulation at all.
-# A numeric UID needs no /etc/passwd entry, and Kubernetes `runAsNonRoot` can
-# only verify a numeric user anyway.
+# Node runtime plus the two shared libraries it links against on musl.
+COPY --from=node:22-alpine /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:22-alpine /usr/lib/libstdc++.so.6 /usr/lib/libgcc_s.so.1 /usr/lib/
+
 WORKDIR /app
 COPY --from=deps --chown=1001:1001 /app/node_modules ./node_modules
 COPY --chown=1001:1001 src ./src
 COPY --chown=1001:1001 package.json ./
 
-# UID:GID both pinned — specifying only a UID leaves the primary group as 0.
+# UID:GID both pinned — specifying only a UID leaves the primary group as 0,
+# and Kubernetes `runAsNonRoot` can only verify a numeric user.
 USER 1001:1001
 EXPOSE 8080
 CMD ["node", "src/server.js"]
