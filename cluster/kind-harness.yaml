@@ -1,0 +1,17 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: harness-demo
+nodes:
+  - role: control-plane
+  - role: worker
+    extraPortMappings:
+      - containerPort: 30080   # dev
+        hostPort: 30080
+        protocol: TCP
+      - containerPort: 30081   # staging
+        hostPort: 30081
+        protocol: TCP
+      - containerPort: 30082   # prod
+        hostPort: 30082
+        protocol: TCP
+  - role: worker
