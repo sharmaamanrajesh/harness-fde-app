@@ -1,0 +1,126 @@
+template:
+  name: GitOps Promotion
+  identifier: gitops_promotion
+  versionLabel: v1
+  type: Stage
+  projectIdentifier: HarnessCI
+  orgIdentifier: default
+  description: |-
+    Promotes an already-built, already-scanned image to one environment by
+    bumping the Kustomize image tag in the GitOps repository via a pull request.
+    The artifact is never rebuilt - only the tag pointer moves.
+  tags: {}
+  spec:
+    type: CI
+    # Promotions never run on a pull request: PRs get CI + STO only.
+    when:
+      pipelineStatus: Success
+      condition: <+trigger.event> != "PR"
+    variables:
+      - name: targetEnv
+        type: String
+        description: Overlay directory to promote into
+        required: true
+        value: <+input>.allowedValues(dev,staging,prod)
+      - name: autoMerge
+        type: String
+        description: Merge the promotion PR automatically, or leave it for human review
+        required: true
+        value: <+input>.default(true).allowedValues(true,false)
+      - name: gitopsRepo
+        type: String
+        description: owner/repo holding the Kubernetes manifests
+        required: true
+        value: sharmaamanrajesh/harness-fde-gitops
+    spec:
+      cloneCodebase: false
+      platform:
+        os: Linux
+        arch: Amd64
+      runtime:
+        type: Cloud
+        spec: {}
+      execution:
+        steps:
+          - step:
+              type: Run
+              name: Open GitOps Promotion PR
+              identifier: gitops_pr
+              spec:
+                shell: Sh
+                envVariables:
+                  GITHUB_TOKEN: <+secrets.getValue("github_pat")>
+                  TAG: <+codebase.commitSha>
+                  TARGET_ENV: <+stage.variables.targetEnv>
+                  GITOPS_REPO: <+stage.variables.gitopsRepo>
+                  AUTO_MERGE: <+stage.variables.autoMerge>
+                command: |-
+                  set -eu
+                  API="https://api.github.com/repos/${GITOPS_REPO}"
+                  BRANCH="promote/${TARGET_ENV}/${TAG}"
+
+                  git clone --quiet --depth 1 \
+                    "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITOPS_REPO}.git" gitops
+                  cd gitops
+                  git checkout -q -b "$BRANCH"
+
+                  sed -i "s|^\( *newTag: \).*|\1\"${TAG}\"|" \
+                    "overlays/${TARGET_ENV}/kustomization.yaml"
+                  grep -n "newTag" "overlays/${TARGET_ENV}/kustomization.yaml"
+
+                  git config user.email "pipeline@harness.local"
+                  git config user.name "Harness Pipeline"
+                  git add -A
+
+                  if git diff --cached --quiet; then
+                    echo "${TARGET_ENV} already at ${TAG}, nothing to promote"
+                    exit 0
+                  fi
+
+                  git commit -q -m "chore(${TARGET_ENV}): promote harness-demo-app to ${TAG}"
+                  git push -q origin "$BRANCH"
+
+                  RESP=$(curl -sS -X POST \
+                    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                    -H "Accept: application/vnd.github+json" \
+                    "${API}/pulls" \
+                    -d "{\"title\":\"chore(${TARGET_ENV}): promote to ${TAG}\",\"head\":\"${BRANCH}\",\"base\":\"main\",\"body\":\"Automated promotion to **${TARGET_ENV}**.\\n\\nImage: \`${TAG}\`\\n\\nBuilt and scanned once in CI; this promotion only moves the tag pointer. The artifact is not rebuilt.\"}")
+
+                  PR=$(printf '%s' "$RESP" \
+                    | grep -oE '\"number\"[[:space:]]*:[[:space:]]*[0-9]+' \
+                    | head -1 | grep -oE '[0-9]+')
+
+                  if [ -z "${PR:-}" ]; then
+                    echo "failed to create PR:"; printf '%s' "$RESP" | head -40; exit 1
+                  fi
+                  echo "opened PR #${PR}: https://github.com/${GITOPS_REPO}/pull/${PR}"
+
+                  if [ "$AUTO_MERGE" != "true" ]; then
+                    echo "AUTO_MERGE disabled - leaving PR #${PR} for human review"
+                    exit 0
+                  fi
+
+                  i=1
+                  while [ $i -le 6 ]; do
+                    M=$(curl -sS -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                          "${API}/pulls/${PR}" \
+                        | grep -oE '\"mergeable\"[[:space:]]*:[[:space:]]*(true|false|null)' | head -1)
+                    echo "mergeable check ${i}: ${M:-unknown}"
+                    case "$M" in *true*) break ;; esac
+                    i=$((i + 1))
+                    sleep 5
+                  done
+
+                  MERGE=$(curl -sS -X PUT \
+                    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                    -H "Accept: application/vnd.github+json" \
+                    "${API}/pulls/${PR}/merge" \
+                    -d "{\"merge_method\":\"squash\",\"commit_title\":\"chore(${TARGET_ENV}): promote harness-demo-app to ${TAG} (#${PR})\"}")
+
+                  echo "$MERGE" | grep -q '"merged": *true' || {
+                    echo "merge failed:"; printf '%s' "$MERGE" | head -20; exit 1; }
+                  echo "merged PR #${PR}"
+
+                  curl -sS -o /dev/null -X DELETE \
+                    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                    "${API}/git/refs/heads/${BRANCH}"

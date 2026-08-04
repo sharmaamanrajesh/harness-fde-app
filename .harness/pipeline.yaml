@@ -180,113 +180,19 @@ pipeline:
     - stage:
         name: Promote to Dev
         identifier: promote_dev
-        type: CI
-        tags: {}
-        # Shift-left: on a pull request only CI + STO run. Nothing is
-        # promoted or deployed until the change is merged.
-        when:
-          pipelineStatus: Success
-          condition: <+trigger.event> != "PR"
-        spec:
-          cloneCodebase: false
-          platform:
-            os: Linux
-            arch: Amd64
-          runtime:
-            type: Cloud
-            spec: {}
-          execution:
-            steps:
-              - step:
-                  type: Run
-                  name: Open GitOps Promotion PR
-                  identifier: gitops_pr
-                  spec:
-                    shell: Sh
-                    envVariables:
-                      GITHUB_TOKEN: <+secrets.getValue("github_pat")>
-                      TAG: <+codebase.commitSha>
-                      TARGET_ENV: dev
-                      GITOPS_REPO: sharmaamanrajesh/harness-fde-gitops
-                      AUTO_MERGE: "true"
-                    command: |-
-                      set -eu
-                      API="https://api.github.com/repos/${GITOPS_REPO}"
-                      BRANCH="promote/${TARGET_ENV}/${TAG}"
+        template:
+          templateRef: gitops_promotion
+          versionLabel: v1
+          templateInputs:
+            type: CI
+            variables:
+              - name: targetEnv
+                type: String
+                value: dev
+              - name: autoMerge
+                type: String
+                value: "true"
 
-                      git clone --quiet --depth 1 \
-                        "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITOPS_REPO}.git" gitops
-                      cd gitops
-                      git checkout -q -b "$BRANCH"
-
-                      sed -i "s|^\( *newTag: \).*|\1\"${TAG}\"|" \
-                        "overlays/${TARGET_ENV}/kustomization.yaml"
-                      grep -n "newTag" "overlays/${TARGET_ENV}/kustomization.yaml"
-
-                      git config user.email "pipeline@harness.local"
-                      git config user.name "Harness Pipeline"
-                      git add -A
-
-                      if git diff --cached --quiet; then
-                        echo "${TARGET_ENV} already at ${TAG}, nothing to promote"
-                        exit 0
-                      fi
-
-                      git commit -q -m "chore(${TARGET_ENV}): promote harness-demo-app to ${TAG}"
-                      git push -q origin "$BRANCH"
-                      echo "pushed branch $BRANCH"
-
-                      # ── open the pull request ──
-                      RESP=$(curl -sS -X POST \
-                        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                        -H "Accept: application/vnd.github+json" \
-                        "${API}/pulls" \
-                        -d "{\"title\":\"chore(${TARGET_ENV}): promote to ${TAG}\",\"head\":\"${BRANCH}\",\"base\":\"main\",\"body\":\"Automated promotion to **${TARGET_ENV}**.\\n\\nImage: \`${TAG}\`\\n\\nThis image passed unit tests, SAST, dependency/secret scanning and the CRITICAL container-scan gate.\"}")
-
-                      PR=$(printf '%s' "$RESP" \
-                        | grep -oE '\"number\"[[:space:]]*:[[:space:]]*[0-9]+' \
-                        | head -1 | grep -oE '[0-9]+')
-
-                      if [ -z "${PR:-}" ]; then
-                        echo "failed to create PR:"
-                        printf '%s' "$RESP" | head -40
-                        exit 1
-                      fi
-                      echo "opened PR #${PR}: https://github.com/${GITOPS_REPO}/pull/${PR}"
-
-                      if [ "$AUTO_MERGE" != "true" ]; then
-                        echo "AUTO_MERGE disabled - leaving PR #${PR} for human review"
-                        exit 0
-                      fi
-
-                      # ── wait for GitHub to compute mergeability ──
-                      i=1
-                      while [ $i -le 6 ]; do
-                        M=$(curl -sS -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                              "${API}/pulls/${PR}" \
-                            | grep -oE '\"mergeable\"[[:space:]]*:[[:space:]]*(true|false|null)' | head -1)
-                        echo "mergeable check ${i}: ${M:-unknown}"
-                        case "$M" in *true*) break ;; esac
-                        i=$((i + 1))
-                        sleep 5
-                      done
-
-                      MERGE=$(curl -sS -X PUT \
-                        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                        -H "Accept: application/vnd.github+json" \
-                        "${API}/pulls/${PR}/merge" \
-                        -d "{\"merge_method\":\"squash\",\"commit_title\":\"chore(${TARGET_ENV}): promote harness-demo-app to ${TAG} (#${PR})\"}")
-
-                      echo "$MERGE" | grep -q '"merged": *true' || {
-                        echo "merge failed:"; printf '%s' "$MERGE" | head -20; exit 1; }
-                      echo "merged PR #${PR}"
-
-                      curl -sS -o /dev/null -X DELETE \
-                        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                        "${API}/git/refs/heads/${BRANCH}"
-                      echo "deleted branch ${BRANCH}"
-
-    # ══ 4. CD Stage (Deploy to Kubernetes) ═══════════════════════════
     - stage:
         name: CD
         identifier: cd
@@ -365,105 +271,19 @@ pipeline:
     - stage:
         name: Promote to Staging
         identifier: promote_staging
-        type: CI
-        tags: {}
-        when:
-          pipelineStatus: Success
-          condition: <+trigger.event> != "PR"
-        spec:
-          cloneCodebase: false
-          platform:
-            os: Linux
-            arch: Amd64
-          runtime:
-            type: Cloud
-            spec: {}
-          execution:
-            steps:
-              - step:
-                  type: Run
-                  name: Open GitOps Promotion PR
-                  identifier: gitops_pr_staging
-                  spec:
-                    shell: Sh
-                    envVariables:
-                      GITHUB_TOKEN: <+secrets.getValue("github_pat")>
-                      TAG: <+codebase.commitSha>
-                      TARGET_ENV: staging
-                      GITOPS_REPO: sharmaamanrajesh/harness-fde-gitops
-                      AUTO_MERGE: "true"
-                    command: |-
-                      set -eu
-                      API="https://api.github.com/repos/${GITOPS_REPO}"
-                      BRANCH="promote/${TARGET_ENV}/${TAG}"
+        template:
+          templateRef: gitops_promotion
+          versionLabel: v1
+          templateInputs:
+            type: CI
+            variables:
+              - name: targetEnv
+                type: String
+                value: staging
+              - name: autoMerge
+                type: String
+                value: "true"
 
-                      git clone --quiet --depth 1 \
-                        "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITOPS_REPO}.git" gitops
-                      cd gitops
-                      git checkout -q -b "$BRANCH"
-
-                      sed -i "s|^\( *newTag: \).*|\1\"${TAG}\"|" \
-                        "overlays/${TARGET_ENV}/kustomization.yaml"
-                      grep -n "newTag" "overlays/${TARGET_ENV}/kustomization.yaml"
-
-                      git config user.email "pipeline@harness.local"
-                      git config user.name "Harness Pipeline"
-                      git add -A
-
-                      if git diff --cached --quiet; then
-                        echo "${TARGET_ENV} already at ${TAG}, nothing to promote"
-                        exit 0
-                      fi
-
-                      git commit -q -m "chore(${TARGET_ENV}): promote harness-demo-app to ${TAG}"
-                      git push -q origin "$BRANCH"
-
-                      RESP=$(curl -sS -X POST \
-                        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                        -H "Accept: application/vnd.github+json" \
-                        "${API}/pulls" \
-                        -d "{\"title\":\"chore(${TARGET_ENV}): promote to ${TAG}\",\"head\":\"${BRANCH}\",\"base\":\"main\",\"body\":\"Automated promotion to **${TARGET_ENV}**.\\n\\nImage: \`${TAG}\`\\n\\nSame artifact already verified in dev. Not rebuilt.\"}")
-
-                      PR=$(printf '%s' "$RESP" \
-                        | grep -oE '\"number\"[[:space:]]*:[[:space:]]*[0-9]+' \
-                        | head -1 | grep -oE '[0-9]+')
-
-                      if [ -z "${PR:-}" ]; then
-                        echo "failed to create PR:"; printf '%s' "$RESP" | head -40; exit 1
-                      fi
-                      echo "opened PR #${PR}: https://github.com/${GITOPS_REPO}/pull/${PR}"
-
-                      if [ "$AUTO_MERGE" != "true" ]; then
-                        echo "AUTO_MERGE disabled - leaving PR #${PR} for human review"
-                        exit 0
-                      fi
-
-                      i=1
-                      while [ $i -le 6 ]; do
-                        M=$(curl -sS -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                              "${API}/pulls/${PR}" \
-                            | grep -oE '\"mergeable\"[[:space:]]*:[[:space:]]*(true|false|null)' | head -1)
-                        echo "mergeable check ${i}: ${M:-unknown}"
-                        case "$M" in *true*) break ;; esac
-                        i=$((i + 1))
-                        sleep 5
-                      done
-
-                      MERGE=$(curl -sS -X PUT \
-                        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                        -H "Accept: application/vnd.github+json" \
-                        "${API}/pulls/${PR}/merge" \
-                        -d "{\"merge_method\":\"squash\",\"commit_title\":\"chore(${TARGET_ENV}): promote harness-demo-app to ${TAG} (#${PR})\"}")
-
-                      echo "$MERGE" | grep -q '"merged": *true' || {
-                        echo "merge failed:"; printf '%s' "$MERGE" | head -20; exit 1; }
-                      echo "merged PR #${PR}"
-
-                      curl -sS -o /dev/null -X DELETE \
-                        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                        "${API}/git/refs/heads/${BRANCH}"
-
-    # ══ 6. CD - Staging ══════════════════════════════════════════════
     - stage:
         name: CD - Staging
         identifier: cd_staging
@@ -575,105 +395,19 @@ pipeline:
     - stage:
         name: Promote to Prod
         identifier: promote_prod
-        type: CI
-        tags: {}
-        when:
-          pipelineStatus: Success
-          condition: <+trigger.event> != "PR"
-        spec:
-          cloneCodebase: false
-          platform:
-            os: Linux
-            arch: Amd64
-          runtime:
-            type: Cloud
-            spec: {}
-          execution:
-            steps:
-              - step:
-                  type: Run
-                  name: Open GitOps Promotion PR
-                  identifier: gitops_pr_prod
-                  spec:
-                    shell: Sh
-                    envVariables:
-                      GITHUB_TOKEN: <+secrets.getValue("github_pat")>
-                      TAG: <+codebase.commitSha>
-                      TARGET_ENV: prod
-                      GITOPS_REPO: sharmaamanrajesh/harness-fde-gitops
-                      AUTO_MERGE: "true"
-                    command: |-
-                      set -eu
-                      API="https://api.github.com/repos/${GITOPS_REPO}"
-                      BRANCH="promote/${TARGET_ENV}/${TAG}"
+        template:
+          templateRef: gitops_promotion
+          versionLabel: v1
+          templateInputs:
+            type: CI
+            variables:
+              - name: targetEnv
+                type: String
+                value: prod
+              - name: autoMerge
+                type: String
+                value: "true"
 
-                      git clone --quiet --depth 1 \
-                        "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITOPS_REPO}.git" gitops
-                      cd gitops
-                      git checkout -q -b "$BRANCH"
-
-                      sed -i "s|^\( *newTag: \).*|\1\"${TAG}\"|" \
-                        "overlays/${TARGET_ENV}/kustomization.yaml"
-                      grep -n "newTag" "overlays/${TARGET_ENV}/kustomization.yaml"
-
-                      git config user.email "pipeline@harness.local"
-                      git config user.name "Harness Pipeline"
-                      git add -A
-
-                      if git diff --cached --quiet; then
-                        echo "${TARGET_ENV} already at ${TAG}, nothing to promote"
-                        exit 0
-                      fi
-
-                      git commit -q -m "chore(${TARGET_ENV}): promote harness-demo-app to ${TAG}"
-                      git push -q origin "$BRANCH"
-
-                      RESP=$(curl -sS -X POST \
-                        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                        -H "Accept: application/vnd.github+json" \
-                        "${API}/pulls" \
-                        -d "{\"title\":\"chore(${TARGET_ENV}): promote to ${TAG}\",\"head\":\"${BRANCH}\",\"base\":\"main\",\"body\":\"Automated promotion to **${TARGET_ENV}** after manual approval.\\n\\nImage: \`${TAG}\`\\n\\nSame artifact verified in dev and staging. Not rebuilt.\"}")
-
-                      PR=$(printf '%s' "$RESP" \
-                        | grep -oE '\"number\"[[:space:]]*:[[:space:]]*[0-9]+' \
-                        | head -1 | grep -oE '[0-9]+')
-
-                      if [ -z "${PR:-}" ]; then
-                        echo "failed to create PR:"; printf '%s' "$RESP" | head -40; exit 1
-                      fi
-                      echo "opened PR #${PR}: https://github.com/${GITOPS_REPO}/pull/${PR}"
-
-                      if [ "$AUTO_MERGE" != "true" ]; then
-                        echo "AUTO_MERGE disabled - leaving PR #${PR} for human review"
-                        exit 0
-                      fi
-
-                      i=1
-                      while [ $i -le 6 ]; do
-                        M=$(curl -sS -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                              "${API}/pulls/${PR}" \
-                            | grep -oE '\"mergeable\"[[:space:]]*:[[:space:]]*(true|false|null)' | head -1)
-                        echo "mergeable check ${i}: ${M:-unknown}"
-                        case "$M" in *true*) break ;; esac
-                        i=$((i + 1))
-                        sleep 5
-                      done
-
-                      MERGE=$(curl -sS -X PUT \
-                        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                        -H "Accept: application/vnd.github+json" \
-                        "${API}/pulls/${PR}/merge" \
-                        -d "{\"merge_method\":\"squash\",\"commit_title\":\"chore(${TARGET_ENV}): promote harness-demo-app to ${TAG} (#${PR})\"}")
-
-                      echo "$MERGE" | grep -q '"merged": *true' || {
-                        echo "merge failed:"; printf '%s' "$MERGE" | head -20; exit 1; }
-                      echo "merged PR #${PR}"
-
-                      curl -sS -o /dev/null -X DELETE \
-                        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                        "${API}/git/refs/heads/${BRANCH}"
-
-    # ══ 9. CD - Prod ═════════════════════════════════════════════════
     - stage:
         name: CD - Prod
         identifier: cd_prod
