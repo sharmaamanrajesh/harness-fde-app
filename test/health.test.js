@@ -17,6 +17,12 @@ test('GET /health returns ok with version and environment', async () => {
   assert.ok(res.body.environment);
 });
 
+test('responses carry version and environment headers', async () => {
+  const res = await request(app).get('/health');
+  assert.ok(res.headers['x-app-version']);
+  assert.ok(res.headers['x-app-environment']);
+});
+
 test('unknown route returns 404 JSON', async () => {
   const res = await request(app).get('/nope');
   assert.strictEqual(res.status, 404);
