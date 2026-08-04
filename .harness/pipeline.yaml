@@ -182,6 +182,11 @@ pipeline:
         identifier: promote_dev
         type: CI
         tags: {}
+        # Shift-left: on a pull request only CI + STO run. Nothing is
+        # promoted or deployed until the change is merged.
+        when:
+          pipelineStatus: Success
+          condition: <+trigger.event> != "PR"
         spec:
           cloneCodebase: false
           platform:
@@ -287,6 +292,9 @@ pipeline:
         identifier: cd
         type: Deployment
         tags: {}
+        when:
+          pipelineStatus: Success
+          condition: <+trigger.event> != "PR"
         failureStrategies:
           - onFailure:
               errors:
@@ -349,6 +357,392 @@ pipeline:
                 type: K8sRollingRollback
                 name: Rollback Deployment
                 identifier: rollback_deploy
+                timeout: 10m
+                spec: {}
+
+    # ══ 5. Promote to Staging ════════════════════════════════════════
+    # Same image, no rebuild. Only the GitOps tag pointer moves.
+    - stage:
+        name: Promote to Staging
+        identifier: promote_staging
+        type: CI
+        tags: {}
+        when:
+          pipelineStatus: Success
+          condition: <+trigger.event> != "PR"
+        spec:
+          cloneCodebase: false
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  type: Run
+                  name: Open GitOps Promotion PR
+                  identifier: gitops_pr_staging
+                  spec:
+                    shell: Sh
+                    envVariables:
+                      GITHUB_TOKEN: <+secrets.getValue("github_pat")>
+                      TAG: <+codebase.commitSha>
+                      TARGET_ENV: staging
+                      GITOPS_REPO: sharmaamanrajesh/harness-fde-gitops
+                      AUTO_MERGE: "true"
+                    command: |-
+                      set -eu
+                      API="https://api.github.com/repos/${GITOPS_REPO}"
+                      BRANCH="promote/${TARGET_ENV}/${TAG}"
+
+                      git clone --quiet --depth 1 \
+                        "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITOPS_REPO}.git" gitops
+                      cd gitops
+                      git checkout -q -b "$BRANCH"
+
+                      sed -i "s|^\( *newTag: \).*|\1\"${TAG}\"|" \
+                        "overlays/${TARGET_ENV}/kustomization.yaml"
+                      grep -n "newTag" "overlays/${TARGET_ENV}/kustomization.yaml"
+
+                      git config user.email "pipeline@harness.local"
+                      git config user.name "Harness Pipeline"
+                      git add -A
+
+                      if git diff --cached --quiet; then
+                        echo "${TARGET_ENV} already at ${TAG}, nothing to promote"
+                        exit 0
+                      fi
+
+                      git commit -q -m "chore(${TARGET_ENV}): promote harness-demo-app to ${TAG}"
+                      git push -q origin "$BRANCH"
+
+                      RESP=$(curl -sS -X POST \
+                        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                        -H "Accept: application/vnd.github+json" \
+                        "${API}/pulls" \
+                        -d "{\"title\":\"chore(${TARGET_ENV}): promote to ${TAG}\",\"head\":\"${BRANCH}\",\"base\":\"main\",\"body\":\"Automated promotion to **${TARGET_ENV}**.\\n\\nImage: \`${TAG}\`\\n\\nSame artifact already verified in dev. Not rebuilt.\"}")
+
+                      PR=$(printf '%s' "$RESP" \
+                        | grep -oE '\"number\"[[:space:]]*:[[:space:]]*[0-9]+' \
+                        | head -1 | grep -oE '[0-9]+')
+
+                      if [ -z "${PR:-}" ]; then
+                        echo "failed to create PR:"; printf '%s' "$RESP" | head -40; exit 1
+                      fi
+                      echo "opened PR #${PR}: https://github.com/${GITOPS_REPO}/pull/${PR}"
+
+                      if [ "$AUTO_MERGE" != "true" ]; then
+                        echo "AUTO_MERGE disabled - leaving PR #${PR} for human review"
+                        exit 0
+                      fi
+
+                      i=1
+                      while [ $i -le 6 ]; do
+                        M=$(curl -sS -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                              "${API}/pulls/${PR}" \
+                            | grep -oE '\"mergeable\"[[:space:]]*:[[:space:]]*(true|false|null)' | head -1)
+                        echo "mergeable check ${i}: ${M:-unknown}"
+                        case "$M" in *true*) break ;; esac
+                        i=$((i + 1))
+                        sleep 5
+                      done
+
+                      MERGE=$(curl -sS -X PUT \
+                        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                        -H "Accept: application/vnd.github+json" \
+                        "${API}/pulls/${PR}/merge" \
+                        -d "{\"merge_method\":\"squash\",\"commit_title\":\"chore(${TARGET_ENV}): promote harness-demo-app to ${TAG} (#${PR})\"}")
+
+                      echo "$MERGE" | grep -q '"merged": *true' || {
+                        echo "merge failed:"; printf '%s' "$MERGE" | head -20; exit 1; }
+                      echo "merged PR #${PR}"
+
+                      curl -sS -o /dev/null -X DELETE \
+                        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                        "${API}/git/refs/heads/${BRANCH}"
+
+    # ══ 6. CD - Staging ══════════════════════════════════════════════
+    - stage:
+        name: CD - Staging
+        identifier: cd_staging
+        type: Deployment
+        tags: {}
+        when:
+          pipelineStatus: Success
+          condition: <+trigger.event> != "PR"
+        failureStrategies:
+          - onFailure:
+              errors:
+                - AllErrors
+              action:
+                type: StageRollback
+        spec:
+          deploymentType: Kubernetes
+          service:
+            serviceRef: harnessdemoapp
+          environment:
+            environmentRef: staging
+            deployToAll: false
+            infrastructureDefinitions:
+              - identifier: kind_staging
+          execution:
+            steps:
+              - step:
+                  type: K8sRollingDeploy
+                  name: Rolling Deployment
+                  identifier: rolling_deploy_staging
+                  timeout: 10m
+                  spec:
+                    skipDryRun: false
+                    pruningEnabled: false
+                  failureStrategies:
+                    - onFailure:
+                        errors:
+                          - AllErrors
+                        action:
+                          type: Retry
+                          spec:
+                            retryCount: 2
+                            retryIntervals:
+                              - 30s
+                              - 60s
+                            onRetryFailure:
+                              action:
+                                type: StageRollback
+              - step:
+                  type: Http
+                  name: Post-Deployment Validation
+                  identifier: health_check_staging
+                  timeout: 2m
+                  spec:
+                    url: http://harness-demo-app.staging.svc.cluster.local/health
+                    method: GET
+                    headers: []
+                    outputVariables: []
+                    assertion: <+httpResponseCode> == 200 && <+json.select("version", httpResponseBody)> == "<+codebase.commitSha>"
+                  failureStrategies:
+                    - onFailure:
+                        errors:
+                          - AllErrors
+                        action:
+                          type: StageRollback
+          rollbackSteps:
+            - step:
+                type: K8sRollingRollback
+                name: Rollback Deployment
+                identifier: rollback_deploy_staging
+                timeout: 10m
+                spec: {}
+
+    # ══ 7. Manual approval gate before production ════════════════════
+    - stage:
+        name: Approve Production
+        identifier: approve_prod
+        type: Approval
+        tags: {}
+        when:
+          pipelineStatus: Success
+          condition: <+trigger.event> != "PR"
+        spec:
+          execution:
+            steps:
+              - step:
+                  type: HarnessApproval
+                  name: Approve Production Release
+                  identifier: approve_prod_step
+                  timeout: 1d
+                  spec:
+                    approvalMessage: |-
+                      Promote harness-demo-app to PRODUCTION?
+
+                      Image: <+pipeline.variables.imageRepo>:<+codebase.commitSha>
+
+                      This artifact passed unit tests, SAST, dependency/secret
+                      scanning and the CRITICAL container-scan gate, and is
+                      already running in dev and staging. It will not be rebuilt.
+                    includePipelineExecutionHistory: true
+                    isAutoRejectEnabled: false
+                    approvers:
+                      userGroups:
+                        - _project_all_users
+                      minimumCount: 1
+                      disallowPipelineExecutor: false
+                    approverInputs: []
+
+    # ══ 8. Promote to Prod ═══════════════════════════════════════════
+    - stage:
+        name: Promote to Prod
+        identifier: promote_prod
+        type: CI
+        tags: {}
+        when:
+          pipelineStatus: Success
+          condition: <+trigger.event> != "PR"
+        spec:
+          cloneCodebase: false
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  type: Run
+                  name: Open GitOps Promotion PR
+                  identifier: gitops_pr_prod
+                  spec:
+                    shell: Sh
+                    envVariables:
+                      GITHUB_TOKEN: <+secrets.getValue("github_pat")>
+                      TAG: <+codebase.commitSha>
+                      TARGET_ENV: prod
+                      GITOPS_REPO: sharmaamanrajesh/harness-fde-gitops
+                      AUTO_MERGE: "true"
+                    command: |-
+                      set -eu
+                      API="https://api.github.com/repos/${GITOPS_REPO}"
+                      BRANCH="promote/${TARGET_ENV}/${TAG}"
+
+                      git clone --quiet --depth 1 \
+                        "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITOPS_REPO}.git" gitops
+                      cd gitops
+                      git checkout -q -b "$BRANCH"
+
+                      sed -i "s|^\( *newTag: \).*|\1\"${TAG}\"|" \
+                        "overlays/${TARGET_ENV}/kustomization.yaml"
+                      grep -n "newTag" "overlays/${TARGET_ENV}/kustomization.yaml"
+
+                      git config user.email "pipeline@harness.local"
+                      git config user.name "Harness Pipeline"
+                      git add -A
+
+                      if git diff --cached --quiet; then
+                        echo "${TARGET_ENV} already at ${TAG}, nothing to promote"
+                        exit 0
+                      fi
+
+                      git commit -q -m "chore(${TARGET_ENV}): promote harness-demo-app to ${TAG}"
+                      git push -q origin "$BRANCH"
+
+                      RESP=$(curl -sS -X POST \
+                        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                        -H "Accept: application/vnd.github+json" \
+                        "${API}/pulls" \
+                        -d "{\"title\":\"chore(${TARGET_ENV}): promote to ${TAG}\",\"head\":\"${BRANCH}\",\"base\":\"main\",\"body\":\"Automated promotion to **${TARGET_ENV}** after manual approval.\\n\\nImage: \`${TAG}\`\\n\\nSame artifact verified in dev and staging. Not rebuilt.\"}")
+
+                      PR=$(printf '%s' "$RESP" \
+                        | grep -oE '\"number\"[[:space:]]*:[[:space:]]*[0-9]+' \
+                        | head -1 | grep -oE '[0-9]+')
+
+                      if [ -z "${PR:-}" ]; then
+                        echo "failed to create PR:"; printf '%s' "$RESP" | head -40; exit 1
+                      fi
+                      echo "opened PR #${PR}: https://github.com/${GITOPS_REPO}/pull/${PR}"
+
+                      if [ "$AUTO_MERGE" != "true" ]; then
+                        echo "AUTO_MERGE disabled - leaving PR #${PR} for human review"
+                        exit 0
+                      fi
+
+                      i=1
+                      while [ $i -le 6 ]; do
+                        M=$(curl -sS -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                              "${API}/pulls/${PR}" \
+                            | grep -oE '\"mergeable\"[[:space:]]*:[[:space:]]*(true|false|null)' | head -1)
+                        echo "mergeable check ${i}: ${M:-unknown}"
+                        case "$M" in *true*) break ;; esac
+                        i=$((i + 1))
+                        sleep 5
+                      done
+
+                      MERGE=$(curl -sS -X PUT \
+                        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                        -H "Accept: application/vnd.github+json" \
+                        "${API}/pulls/${PR}/merge" \
+                        -d "{\"merge_method\":\"squash\",\"commit_title\":\"chore(${TARGET_ENV}): promote harness-demo-app to ${TAG} (#${PR})\"}")
+
+                      echo "$MERGE" | grep -q '"merged": *true' || {
+                        echo "merge failed:"; printf '%s' "$MERGE" | head -20; exit 1; }
+                      echo "merged PR #${PR}"
+
+                      curl -sS -o /dev/null -X DELETE \
+                        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                        "${API}/git/refs/heads/${BRANCH}"
+
+    # ══ 9. CD - Prod ═════════════════════════════════════════════════
+    - stage:
+        name: CD - Prod
+        identifier: cd_prod
+        type: Deployment
+        tags: {}
+        when:
+          pipelineStatus: Success
+          condition: <+trigger.event> != "PR"
+        failureStrategies:
+          - onFailure:
+              errors:
+                - AllErrors
+              action:
+                type: StageRollback
+        spec:
+          deploymentType: Kubernetes
+          service:
+            serviceRef: harnessdemoapp
+          environment:
+            environmentRef: prod
+            deployToAll: false
+            infrastructureDefinitions:
+              - identifier: kind_prod
+          execution:
+            steps:
+              - step:
+                  type: K8sRollingDeploy
+                  name: Rolling Deployment
+                  identifier: rolling_deploy_prod
+                  timeout: 10m
+                  spec:
+                    skipDryRun: false
+                    pruningEnabled: false
+                  failureStrategies:
+                    - onFailure:
+                        errors:
+                          - AllErrors
+                        action:
+                          type: Retry
+                          spec:
+                            retryCount: 2
+                            retryIntervals:
+                              - 30s
+                              - 60s
+                            onRetryFailure:
+                              action:
+                                type: StageRollback
+              - step:
+                  type: Http
+                  name: Post-Deployment Validation
+                  identifier: health_check_prod
+                  timeout: 2m
+                  spec:
+                    url: http://harness-demo-app.prod.svc.cluster.local/health
+                    method: GET
+                    headers: []
+                    outputVariables: []
+                    assertion: <+httpResponseCode> == 200 && <+json.select("version", httpResponseBody)> == "<+codebase.commitSha>"
+                  failureStrategies:
+                    - onFailure:
+                        errors:
+                          - AllErrors
+                        action:
+                          type: StageRollback
+          rollbackSteps:
+            - step:
+                type: K8sRollingRollback
+                name: Rollback Deployment
+                identifier: rollback_deploy_prod
                 timeout: 10m
                 spec: {}
   allowStageExecutions: true
