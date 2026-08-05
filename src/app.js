@@ -25,6 +25,7 @@ app.get('/health', (req, res) => {
     version: COMMIT_SHA,
     environment: ENVIRONMENT,
     hostname: os.hostname(),
+    startedAt: new Date(STARTED_AT).toISOString(),
     uptimeSeconds: Math.floor((Date.now() - STARTED_AT) / 1000),
   });
 });

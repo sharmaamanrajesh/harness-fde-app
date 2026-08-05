@@ -17,6 +17,12 @@ test('GET /health returns ok with version and environment', async () => {
   assert.ok(res.body.environment);
 });
 
+test('GET /health reports when the process started', async () => {
+  const res = await request(app).get('/health');
+  assert.strictEqual(res.status, 200);
+  assert.ok(!Number.isNaN(Date.parse(res.body.startedAt)));
+});
+
 test('responses carry version and environment headers', async () => {
   const res = await request(app).get('/health');
   assert.ok(res.headers['x-app-version']);
