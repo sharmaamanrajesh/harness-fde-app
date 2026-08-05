@@ -1,0 +1,37 @@
+# Final submitted state - 2026-08-05 13:45:34Z
+
+## Environments (one artifact, three environments)
+ENV       PODS   PORT      VERSION                                      STATUS
+---       ----   ----      -------                                      ------
+dev       2      30080     27d5dc227030c7f76d01ea69c5f4cb0e9a834f3b     ok
+staging   2      30081     27d5dc227030c7f76d01ea69c5f4cb0e9a834f3b     ok
+prod      3      30082     27d5dc227030c7f76d01ea69c5f4cb0e9a834f3b     ok
+
+## Deployed image per namespace
+dev      docker.io/sharmaamanrajesh/harness-demo-app:27d5dc227030c7f76d01ea69c5f4cb0e9a834f3b
+staging  docker.io/sharmaamanrajesh/harness-demo-app:27d5dc227030c7f76d01ea69c5f4cb0e9a834f3b
+prod     docker.io/sharmaamanrajesh/harness-demo-app:27d5dc227030c7f76d01ea69c5f4cb0e9a834f3b
+
+## GitOps overlays (source of truth) - synced with origin/main
+overlays/dev          newTag: "27d5dc227030c7f76d01ea69c5f4cb0e9a834f3b"
+overlays/staging      newTag: "27d5dc227030c7f76d01ea69c5f4cb0e9a834f3b"
+overlays/prod         newTag: "27d5dc227030c7f76d01ea69c5f4cb0e9a834f3b"
+
+## Promotion trail for this artifact
+  552c5c4 chore(prod): promote harness-demo-app to 27d5dc227030c7f76d01ea69c5f4cb0e9a834f3b (#16)
+  70733ee chore(staging): promote harness-demo-app to 27d5dc227030c7f76d01ea69c5f4cb0e9a834f3b (#15)
+  4673f60 chore(dev): promote harness-demo-app to 27d5dc227030c7f76d01ea69c5f4cb0e9a834f3b (#14)
+
+## Pod placement across the two workers
+  dev      harness-demo-app-755f4b59f5-25ffb        Running   harness-demo-worker2
+  dev      harness-demo-app-755f4b59f5-5hqgm        Running   harness-demo-worker2
+  staging  harness-demo-app-85db8d88fc-f2sc5        Running   harness-demo-worker
+  staging  harness-demo-app-85db8d88fc-qdmx7        Running   harness-demo-worker2
+  prod     harness-demo-app-c86699b9c-dm4pj         Running   harness-demo-worker
+  prod     harness-demo-app-c86699b9c-gs86j         Running   harness-demo-worker2
+  prod     harness-demo-app-c86699b9c-pd994         Running   harness-demo-worker2
+
+## CD stage configuration (all three identical)
+  cd           timeout=10m  retry=2 errors=['Timeout', 'AllErrors'] rollbackSteps=['K8sRollingRollback']
+  cd_staging   timeout=10m  retry=2 errors=['Timeout', 'AllErrors'] rollbackSteps=['K8sRollingRollback']
+  cd_prod      timeout=10m  retry=2 errors=['Timeout', 'AllErrors'] rollbackSteps=['K8sRollingRollback']

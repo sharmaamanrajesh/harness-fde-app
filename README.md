@@ -417,10 +417,29 @@ harness-fde-app/
 
 ## 10. Evidence
 
+Harness execution links require access to the `HarnessCI` project. Screenshots of each are in
+[`evidence/`](evidence/) so the run is reviewable without an account.
+
 | Artefact | Link |
 |---|---|
-| Security gate blocking a PR | [harness-fde-app#1](https://github.com/sharmaamanrajesh/harness-fde-app/pull/1) |
-| GitOps promotion PRs | [harness-fde-gitops PRs](https://github.com/sharmaamanrajesh/harness-fde-gitops/pulls?q=is%3Apr) |
-| Successful pipeline execution | _add link_ |
-| Gate-failure execution | _add link_ |
-| Rollback execution | _add link_ |
+| **Successful pipeline execution** — all 9 stages green | [execution hOuCk3S8](https://app.harness.io/ng/account/GLZAz1FFTx2Pei5U0q2GAQ/module/cd/orgs/default/projects/HarnessCI/pipelines/harness_fde_cicd/executions/hOuCk3S8SJuhLg-q3Nj_Uw/pipeline?storeType=INLINE) |
+| **Security gate failing a PR** — `CVE-2022-37434`, deploy stages skipped | [execution oAgjAYcr](https://app.harness.io/ng/account/GLZAz1FFTx2Pei5U0q2GAQ/module/cd/orgs/default/projects/HarnessCI/pipelines/harness_fde_cicd/executions/oAgjAYcrTEaswfUCYmOD8A/pipeline?storeType=INLINE) |
+| **Rollback on a failed deployment** — retry, then `K8sRollingRollback` | [execution hnhFkX0f](https://app.harness.io/ng/account/GLZAz1FFTx2Pei5U0q2GAQ/module/cd/orgs/default/projects/HarnessCI/pipelines/harness_fde_cicd/executions/hnhFkX0fQXmNqW8KGjSTnw/pipeline?storeType=INLINE) |
+| Pull request blocked by the gate | [harness-fde-app#1](https://github.com/sharmaamanrajesh/harness-fde-app/pull/1) |
+| GitOps promotion PRs — one line each, dev → staging → prod | [harness-fde-gitops PRs](https://github.com/sharmaamanrajesh/harness-fde-gitops/pulls?q=is%3Apr) |
+
+### Captured evidence
+
+```
+evidence/00-blockers/          STO module unavailable on the free tier
+evidence/01-steady-state/      one artifact across three environments, merged promotion PRs
+evidence/02-green-run/         full pipeline, approval gate, zero-downtime measurement
+evidence/03-gate-blocks-pr/    red check on the PR, deploy stages skipped
+evidence/04-rollback/          ImagePullBackOff, retry, rollback step log, restored state
+```
+
+Key measurements, captured rather than claimed:
+
+- `evidence/02-green-run/zero-downtime-probe.txt` — **3,295 requests, 0 failures** across a rolling update
+- `evidence/04-rollback/rollback-verified.txt` — rollback restored the previous release; serving pods
+  145 minutes old with 0 restarts throughout a failed deployment
