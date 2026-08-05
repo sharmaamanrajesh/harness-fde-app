@@ -20,7 +20,11 @@ RUN npm ci --omit=dev
 # base currently carries CVE-2026-31789 (CRITICAL) in libssl3.
 #
 # This stage contains no RUN, so cross-building needs no QEMU emulation at all.
-FROM alpine:3.24 AS runtime
+# !! DEMO BRANCH ONLY - DO NOT MERGE !!
+# Deliberately downgraded from alpine:3.24 to a base carrying
+# CVE-2022-37434 (CRITICAL, zlib) to prove the pipeline's security
+# gate blocks a pull request before it can be merged.
+FROM alpine:3.12 AS runtime
 ARG COMMIT_SHA=local-dev
 ENV NODE_ENV=production \
     PORT=8080 \
