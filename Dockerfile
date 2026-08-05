@@ -20,7 +20,7 @@ RUN npm ci --omit=dev
 # base currently carries CVE-2026-31789 (CRITICAL) in libssl3.
 #
 # This stage contains no RUN, so cross-building needs no QEMU emulation at all.
-FROM alpine:3.24 AS runtime
+FROM alpine:3.12 AS runtime
 ARG COMMIT_SHA=local-dev
 ENV NODE_ENV=production \
     PORT=8080 \
