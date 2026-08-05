@@ -202,6 +202,13 @@ pipeline:
           pipelineStatus: Success
           condition: <+trigger.event> != "PR"
         failureStrategies:
+          # Timeout must be declared separately: a step that runs out of time
+          # expires rather than erroring, and AllErrors does not cover it.
+          - onFailure:
+              errors:
+                - Timeout
+              action:
+                type: StageRollback
           - onFailure:
               errors:
                 - AllErrors
@@ -227,6 +234,19 @@ pipeline:
                     skipDryRun: false
                     pruningEnabled: false
                   failureStrategies:
+                    - onFailure:
+                        errors:
+                          - Timeout
+                        action:
+                          type: Retry
+                          spec:
+                            retryCount: 2
+                            retryIntervals:
+                              - 30s
+                              - 60s
+                            onRetryFailure:
+                              action:
+                                type: StageRollback
                     - onFailure:
                         errors:
                           - AllErrors
@@ -255,16 +275,21 @@ pipeline:
                   failureStrategies:
                     - onFailure:
                         errors:
+                          - Timeout
+                        action:
+                          type: StageRollback
+                    - onFailure:
+                        errors:
                           - AllErrors
                         action:
                           type: StageRollback
-          rollbackSteps:
-            - step:
-                type: K8sRollingRollback
-                name: Rollback Deployment
-                identifier: rollback_deploy
-                timeout: 10m
-                spec: {}
+            rollbackSteps:
+              - step:
+                  type: K8sRollingRollback
+                  name: Rollback Deployment
+                  identifier: rollback_deploy
+                  timeout: 10m
+                  spec: {}
 
     # ══ 5. Promote to Staging ════════════════════════════════════════
     # Same image, no rebuild. Only the GitOps tag pointer moves.
@@ -293,6 +318,13 @@ pipeline:
           pipelineStatus: Success
           condition: <+trigger.event> != "PR"
         failureStrategies:
+          # Timeout must be declared separately: a step that runs out of time
+          # expires rather than erroring, and AllErrors does not cover it.
+          - onFailure:
+              errors:
+                - Timeout
+              action:
+                type: StageRollback
           - onFailure:
               errors:
                 - AllErrors
@@ -320,6 +352,19 @@ pipeline:
                   failureStrategies:
                     - onFailure:
                         errors:
+                          - Timeout
+                        action:
+                          type: Retry
+                          spec:
+                            retryCount: 2
+                            retryIntervals:
+                              - 30s
+                              - 60s
+                            onRetryFailure:
+                              action:
+                                type: StageRollback
+                    - onFailure:
+                        errors:
                           - AllErrors
                         action:
                           type: Retry
@@ -345,16 +390,21 @@ pipeline:
                   failureStrategies:
                     - onFailure:
                         errors:
+                          - Timeout
+                        action:
+                          type: StageRollback
+                    - onFailure:
+                        errors:
                           - AllErrors
                         action:
                           type: StageRollback
-          rollbackSteps:
-            - step:
-                type: K8sRollingRollback
-                name: Rollback Deployment
-                identifier: rollback_deploy_staging
-                timeout: 10m
-                spec: {}
+            rollbackSteps:
+              - step:
+                  type: K8sRollingRollback
+                  name: Rollback Deployment
+                  identifier: rollback_deploy_staging
+                  timeout: 10m
+                  spec: {}
 
     # ══ 7. Manual approval gate before production ════════════════════
     - stage:
@@ -417,6 +467,13 @@ pipeline:
           pipelineStatus: Success
           condition: <+trigger.event> != "PR"
         failureStrategies:
+          # Timeout must be declared separately: a step that runs out of time
+          # expires rather than erroring, and AllErrors does not cover it.
+          - onFailure:
+              errors:
+                - Timeout
+              action:
+                type: StageRollback
           - onFailure:
               errors:
                 - AllErrors
@@ -444,6 +501,19 @@ pipeline:
                   failureStrategies:
                     - onFailure:
                         errors:
+                          - Timeout
+                        action:
+                          type: Retry
+                          spec:
+                            retryCount: 2
+                            retryIntervals:
+                              - 30s
+                              - 60s
+                            onRetryFailure:
+                              action:
+                                type: StageRollback
+                    - onFailure:
+                        errors:
                           - AllErrors
                         action:
                           type: Retry
@@ -469,14 +539,19 @@ pipeline:
                   failureStrategies:
                     - onFailure:
                         errors:
+                          - Timeout
+                        action:
+                          type: StageRollback
+                    - onFailure:
+                        errors:
                           - AllErrors
                         action:
                           type: StageRollback
-          rollbackSteps:
-            - step:
-                type: K8sRollingRollback
-                name: Rollback Deployment
-                identifier: rollback_deploy_prod
-                timeout: 10m
-                spec: {}
+            rollbackSteps:
+              - step:
+                  type: K8sRollingRollback
+                  name: Rollback Deployment
+                  identifier: rollback_deploy_prod
+                  timeout: 10m
+                  spec: {}
   allowStageExecutions: true

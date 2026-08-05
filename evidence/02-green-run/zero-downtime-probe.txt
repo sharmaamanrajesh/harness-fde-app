@@ -1,0 +1,28 @@
+# Zero-downtime measurement during a rolling update (dev, NodePort 30080)
+# Captured with ./scripts/probe.sh during Harness CD stage
+
+Previous version : 08077568fdde8d45dd93d8d40771ed9923212c45
+New version      : 50a9f327778c7af2117ae31451bb852363f36d7f
+
+Timeline
+  10:48:03   serving old version only
+  10:53:44   new pod passes readiness probe, starts receiving traffic
+  10:53:44   ---- both versions served concurrently for ~15s ----
+  10:53:59   old pod drained and removed; new version only
+
+RESULT   ok = 3295    failed = 0
+
+Interpretation
+  The alternation between old and new SHA between 10:53:44 and 10:53:59 is the
+  rolling update itself: both pods were behind the Service simultaneously and
+  kube-proxy round-robined between them. An instantaneous cutover would have
+  indicated a Recreate strategy, not a rolling one.
+
+  maxUnavailable: 0 means an old pod is only terminated once the surge pod is
+  Ready, and the preStop hook holds the terminating pod open long enough for
+  Endpoint removal to propagate before the process drains.
+
+Earlier measurements on the same setup
+  without preStop hook :  6 failed / 6409 requests
+  with preStop hook    :  1 failed / 8795 requests
+  this run             :  0 failed / 3295 requests

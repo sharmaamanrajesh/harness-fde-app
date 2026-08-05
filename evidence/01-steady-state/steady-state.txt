@@ -1,0 +1,20 @@
+# Steady state - one artifact running in three environments
+# captured: 2026-08-05 04:53:45Z
+
+ENV       PODS   PORT      VERSION                                      STATUS
+---       ----   ----      -------                                      ------
+dev       2      30080     08077568fdde8d45dd93d8d40771ed9923212c45     ok
+staging   2      30081     08077568fdde8d45dd93d8d40771ed9923212c45     ok
+prod      3      30082     08077568fdde8d45dd93d8d40771ed9923212c45     ok
+
+## Pod placement across workers
+harness-demo-app-5c787986b-dkmpg         Running    harness-demo-worker2
+harness-demo-app-5c787986b-jprlv         Running    harness-demo-worker2
+harness-demo-app-6bb57c5f8b-jqr2x        Running    harness-demo-worker
+harness-demo-app-6bb57c5f8b-mf8gn        Running    harness-demo-worker2
+harness-demo-app-6bb57c5f8b-mmm5c        Running    harness-demo-worker
+
+## GitOps overlays - same tag, different environment
+overlays/dev          newTag: "08077568fdde8d45dd93d8d40771ed9923212c45"
+overlays/staging      newTag: "08077568fdde8d45dd93d8d40771ed9923212c45"
+overlays/prod         newTag: "08077568fdde8d45dd93d8d40771ed9923212c45"

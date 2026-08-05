@@ -1,0 +1,13 @@
+# Post-promotion state - Take 2 green run
+# captured: 2026-08-05 06:02:21Z
+
+ENV       PODS   PORT      VERSION                                      STATUS
+---       ----   ----      -------                                      ------
+dev       2      30080     50a9f327778c7af2117ae31451bb852363f36d7f     ok
+staging   2      30081     50a9f327778c7af2117ae31451bb852363f36d7f     ok
+prod      3      30082     50a9f327778c7af2117ae31451bb852363f36d7f     ok
+
+## Same image digest across all three namespaces
+dev      docker.io/sharmaamanrajesh/harness-demo-app:50a9f327778c7af2117ae31451bb852363f36d7f
+staging  docker.io/sharmaamanrajesh/harness-demo-app:50a9f327778c7af2117ae31451bb852363f36d7f
+prod     docker.io/sharmaamanrajesh/harness-demo-app:50a9f327778c7af2117ae31451bb852363f36d7f

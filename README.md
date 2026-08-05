@@ -312,9 +312,25 @@ A forced failure (`newTag: does-not-exist`) left the Deployment `Available=True`
 ReplicaSet would have sat there indefinitely. `progressDeadlineSeconds` does not delete, scale
 down, or revert anything.
 
-That is why the pipeline owns rollback explicitly: retry ×2 at 30s/60s, then `StageRollback` →
-`K8sRollingRollback`. Throughout the failure the serving pods were untouched — 21 hours old with
-0 restarts.
+That is why the pipeline owns rollback explicitly: retry with backoff, then `StageRollback` →
+`K8sRollingRollback`. Verified: the failed ReplicaSet scaled to 0, the Deployment restored to the
+previous image, and the rollback recorded as rollout revision 3 — while the serving pods were never
+replaced (145 minutes old, 0 restarts, across a failed deploy and three failed executions).
+
+### Two bugs this exercise exposed in my own configuration
+
+**`rollbackSteps` was nested under `spec` instead of `spec.execution`.** Harness accepted the YAML,
+silently ignored the unrecognised key, and every `StageRollback` fired against a stage that had no
+rollback steps defined. Nothing warned me — the pipeline validated, saved and ran normally. It
+surfaced only when the safety net was needed and wasn't there, and I had initially mis-read an
+unrelated redeployment as evidence that rollback worked. **Schema validation passing is not
+evidence that a feature is wired up.**
+
+**`errors: [AllErrors]` does not cover step expiry.** A step that runs out of time *expires* rather
+than erroring; the pipeline ended `EXPIRED` and no rollback triggered. `Timeout` must be declared
+as its own `onFailure` entry — it cannot be combined with `AllErrors` in a single list. A
+deployment that hangs rather than fails is precisely the case rollback exists for, so this gap
+mattered.
 
 **Known limitation:** `K8sRollingRollback` restores the previous *Harness* release. It does **not**
 revert the GitOps repo, so cluster and Git diverge after a rollback and the next sync would

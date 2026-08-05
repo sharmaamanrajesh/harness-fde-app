@@ -1,0 +1,76 @@
+# Rollback verified - Harness execution 20 (2026-08-05)
+
+Scenario: overlays/dev pinned to a tag that does not exist in the registry, then the CD
+stage run on its own. Two deploy attempts failed, StageRollback fired, and
+K8sRollingRollback restored the previous successful release.
+
+## Harness rollback step log (execution 20)
+
+  Previous eligible Release is 2 with status Succeeded
+  Rolling back to release 2
+  Rolling back resource Deployment/harness-demo-app in namespace dev to revision 1
+  kubectl --kubeconfig=config rollout undo Deployment/harness-demo-app --namespace=dev --to-revision=1
+  deployment.apps/harness-demo-app rolled back
+  Done.
+
+## Two numbering systems - why "release 2" becomes "revision 1"
+
+  Harness release number : Harness's own counter, held in the harness-demo-app ConfigMap
+                           in the namespace. Increments once per Harness deployment.
+  Kubernetes revision    : deployment.kubernetes.io/revision, maintained by the Deployment
+                           controller. Increments once per pod-template change.
+
+  Harness release   status      k8s revision   image
+  ---------------   ---------   ------------   -----
+  2                 Succeeded   1              50a9f327...
+  4                 Failed      2              does-not-exist
+
+  Harness looks up its last Succeeded release (2), finds the Kubernetes revision that
+  release produced (1), and issues `rollout undo --to-revision=1`.
+  Release 3 is absent because Harness increments per execution, including executions
+  that never produce a workload.
+
+## Cluster state after rollback
+
+  deployment image     : docker.io/sharmaamanrajesh/harness-demo-app:50a9f327778c7af2117ae31451bb852363f36d7f
+  deployment revision  : 3
+
+  RS                            REVISION  DESIRED  IMAGE
+  harness-demo-app-54fd84d564   2         0        does-not-exist        <- failed, scaled down
+  harness-demo-app-65cb9bfb4c   3         2        50a9f327...           <- restored, serving
+
+  rollout history: revisions 2 and 3
+
+  Why revision 3 and not 1: `rollout undo` does not restore an old revision number, it
+  replays that pod template as a NEW revision. Kubernetes reuses the existing ReplicaSet
+  and re-stamps its revision annotation, so the ReplicaSet that was revision 1 is now
+  revision 3. Rollback moves forward in revision numbering while moving backward in
+  content.
+
+## Availability during the failure
+
+  serving pods: 145 minutes old, 0 restarts, 2/2 Ready throughout
+
+  Across a failed deployment, three failed executions and the rollback itself, the pods
+  carrying traffic were never replaced. maxUnavailable: 0 means an old pod is only
+  terminated once a surge pod reports Ready, which never happened.
+
+## Health endpoint after rollback
+
+  {"status":"ok","version":"50a9f327778c7af2117ae31451bb852363f36d7f","environment":"dev",
+   "hostname":"harness-demo-app-65cb9bfb4c-27w8t","uptimeSeconds":8705}
+
+## Two configuration bugs this test exposed
+
+  1. rollbackSteps was nested under stage.spec instead of stage.spec.execution.
+     Harness accepted the YAML, ignored the unrecognised key, and every StageRollback
+     fired against a stage with no rollback steps defined. No warning at save or run
+     time. Schema validation passing is not evidence that a feature is wired up.
+
+  2. errors: [AllErrors] does not cover step expiry. A step that runs out of time
+     expires rather than errors; the pipeline ended EXPIRED with no rollback triggered.
+     Timeout must be its own onFailure entry and cannot be combined with AllErrors in
+     one list.
+
+  Both were found only by exercising the failure path rather than trusting that a
+  configured safety net works.
