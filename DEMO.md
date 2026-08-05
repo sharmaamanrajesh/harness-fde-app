@@ -78,8 +78,13 @@ Now point at the greyed-out stages:
 
 Back to **Tab 4**, scroll to the merge button:
 
-> "And because `harness_fde_cicd-sto` is a required status check, the merge is blocked — not just
-> reported."
+> "And `harness_fde_cicd-sto` is a required status check under branch protection, so GitHub refuses
+> the merge rather than just reporting it. One caveat I'd flag: `enforce_admins` is off, so as the
+> repo owner I can still bypass it — that's deliberate so a one-person demo can't lock itself out.
+> In a team it would be on."
+
+Say the caveat yourself rather than waiting to be caught on it. Volunteering the limit of your own
+control is more convincing than claiming an absolute.
 
 ### Then the part worth telling
 
